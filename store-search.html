@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpClientId=oglmjsekyv"></script>
 
 <style>
 body{margin:0;padding:20px;background:#f4f7fb;font-family:Arial,'Malgun Gothic',sans-serif;color:#10213f}
@@ -23,18 +24,26 @@ button{border:0;border-radius:12px;padding:12px 16px;font-weight:900;cursor:poin
 .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
 .badge{display:inline-block;padding:9px 12px;border-radius:999px;background:#eef6ff;border:1px solid #b8d3fb;font-weight:900;color:#123f7a}
+#map{width:100%;height:480px;border-radius:14px;border:1px solid #cbd5e1;background:#e5e7eb}
 table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
 th,td{border-bottom:1px solid #e2e8f0;padding:10px;text-align:left}
 th{background:#eaf4ff;color:#0b3b77}
 .small{font-size:12px;color:#64748b}
+.store-link{color:#2563eb;font-weight:900;cursor:pointer;text-decoration:underline}
 </style>
 </head>
 
 <body>
 <div class="wrap">
   <h1>RAVEBIC 점포 근접검색</h1>
-  <div class="sub">세븐일레븐 / 이마트24 점포 리스트 업로드 → Firestore 저장 → 점포 검색 준비</div>
+  <div class="sub">세븐일레븐 / 이마트24 점포 리스트 업로드 → Firestore 저장 → 점포 검색 → 지도 표시</div>
   <div class="badge" id="status">Firebase 연결 준비중...</div>
+
+  <div class="card">
+    <h2>0. 지도</h2>
+    <div id="map"></div>
+    <div class="small" style="margin-top:8px">검색 결과에서 점포명을 클릭하면 지도 중심이 해당 점포로 이동합니다. 현재는 좌표가 있는 데이터만 지도에 표시됩니다.</div>
+  </div>
 
   <div class="card">
     <h2>1. 점포 엑셀 업로드</h2>
@@ -63,7 +72,7 @@ th{background:#eaf4ff;color:#0b3b77}
       <input id="searchInput" placeholder="예: 강남, 역삼, 여의도">
       <button class="blue" onclick="searchStores()">검색</button>
     </div>
-    <div class="small">현재 단계에서는 점포명/주소 검색까지만 됩니다. 좌표 입력 후 가까운 점포 15개 기능을 붙입니다.</div>
+    <div class="small">현재 단계에서는 점포명/주소 검색 + 지도 표시까지 됩니다. 다음 단계에서 주소 좌표 변환 후 가까운 점포 15개 기능을 붙입니다.</div>
   </div>
 
   <div class="card">
@@ -105,8 +114,31 @@ const db = firebase.firestore();
 
 let parsedStores = [];
 let allStores = [];
+let map = null;
+let markers = [];
+let infoWindow = null;
 
 document.getElementById("status").textContent = "Firebase 연결 완료";
+
+function initMap(){
+  if(typeof naver === "undefined" || !naver.maps){
+    document.getElementById("status").textContent = "네이버 지도 로딩 실패";
+    return;
+  }
+
+  map = new naver.maps.Map("map", {
+    center: new naver.maps.LatLng(37.5665, 126.9780),
+    zoom: 11
+  });
+
+  infoWindow = new naver.maps.InfoWindow({
+    content: ""
+  });
+}
+
+window.onload = function(){
+  initMap();
+};
 
 function clean(v){
   return String(v == null ? "" : v).trim();
@@ -122,6 +154,12 @@ function findColumn(headers, candidates){
     if(idx >= 0) return idx;
   }
   return -1;
+}
+
+function toNumberOrNull(v){
+  if(v === null || v === undefined || v === "") return null;
+  const n = Number(String(v).replace(/,/g,"").trim());
+  return Number.isFinite(n) ? n : null;
 }
 
 async function parseExcel(){
@@ -157,6 +195,8 @@ async function parseExcel(){
   const nameCol = findColumn(headers, ["점포명","점포","상호","매장명","점명"]);
   const addressCol = findColumn(headers, ["주소","소재지","점포주소","매장주소"]);
   const codeCol = findColumn(headers, ["점포코드","코드","점코드"]);
+  const latCol = findColumn(headers, ["위도","lat","latitude"]);
+  const lngCol = findColumn(headers, ["경도","lng","lon","longitude"]);
 
   if(nameCol < 0 || addressCol < 0){
     alert("점포명 또는 주소 컬럼을 찾지 못했습니다. 엑셀 헤더명을 확인해야 합니다.");
@@ -165,13 +205,13 @@ async function parseExcel(){
   }
 
   parsedStores = rows.slice(headerRowIndex + 1)
-    .map((r, idx) => ({
+    .map((r) => ({
       brand,
       storeName: clean(r[nameCol]),
       address: clean(r[addressCol]),
       storeCode: codeCol >= 0 ? clean(r[codeCol]) : "",
-      lat: null,
-      lng: null,
+      lat: latCol >= 0 ? toNumberOrNull(r[latCol]) : null,
+      lng: lngCol >= 0 ? toNumberOrNull(r[lngCol]) : null,
       sourceFile: file.name,
       createdAtText: new Date().toISOString()
     }))
@@ -181,6 +221,7 @@ async function parseExcel(){
     file.name + " / " + parsedStores.length.toLocaleString() + "개 점포 읽음";
 
   renderStores(parsedStores.slice(0,100));
+  drawMarkers(parsedStores.slice(0,100));
 }
 
 async function uploadStores(){
@@ -233,6 +274,7 @@ async function loadStores(){
     "저장된 점포 " + allStores.length.toLocaleString() + "개 불러옴";
 
   renderStores(allStores);
+  drawMarkers(allStores);
 }
 
 function searchStores(){
@@ -250,6 +292,7 @@ function searchStores(){
   ).slice(0,100);
 
   renderStores(results);
+  drawMarkers(results);
 }
 
 function renderStores(rows){
@@ -258,6 +301,7 @@ function renderStores(rows){
 
   if(!rows.length){
     tbody.innerHTML = '<tr><td colspan="6">데이터가 없습니다.</td></tr>';
+    clearMarkers();
     return;
   }
 
@@ -265,12 +309,89 @@ function renderStores(rows){
     <tr>
       <td>${i+1}</td>
       <td>${escapeHtml(r.brand)}</td>
-      <td><b>${escapeHtml(r.storeName)}</b></td>
+      <td><span class="store-link" onclick="focusStore(${i})">${escapeHtml(r.storeName)}</span></td>
       <td>${escapeHtml(r.address)}</td>
       <td>${r.lat ?? ""}</td>
       <td>${r.lng ?? ""}</td>
     </tr>
   `).join("");
+
+  window.currentRenderedStores = rows;
+}
+
+function clearMarkers(){
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+}
+
+function hasValidLatLng(store){
+  return Number.isFinite(Number(store.lat)) && Number.isFinite(Number(store.lng));
+}
+
+function drawMarkers(rows){
+  if(!map) return;
+
+  clearMarkers();
+
+  const validRows = rows.filter(hasValidLatLng);
+
+  if(!validRows.length){
+    return;
+  }
+
+  const bounds = new naver.maps.LatLngBounds();
+
+  validRows.forEach((store) => {
+    const pos = new naver.maps.LatLng(Number(store.lat), Number(store.lng));
+    const marker = new naver.maps.Marker({
+      position: pos,
+      map: map,
+      title: store.storeName
+    });
+
+    naver.maps.Event.addListener(marker, "click", function(){
+      openInfo(marker, store);
+    });
+
+    markers.push(marker);
+    bounds.extend(pos);
+  });
+
+  map.fitBounds(bounds);
+}
+
+function focusStore(index){
+  const rows = window.currentRenderedStores || [];
+  const store = rows[index];
+
+  if(!store){
+    return;
+  }
+
+  if(!hasValidLatLng(store)){
+    alert("아직 이 점포에는 위도/경도가 없습니다. 다음 단계에서 주소를 좌표로 변환해야 지도 이동이 가능합니다.");
+    return;
+  }
+
+  const pos = new naver.maps.LatLng(Number(store.lat), Number(store.lng));
+  map.setCenter(pos);
+  map.setZoom(16);
+
+  const marker = markers.find(m => m.getTitle && m.getTitle() === store.storeName);
+  if(marker){
+    openInfo(marker, store);
+  }
+}
+
+function openInfo(marker, store){
+  const html = `
+    <div style="padding:10px;min-width:210px">
+      <b>${escapeHtml(store.brand)} ${escapeHtml(store.storeName)}</b><br>
+      <span style="font-size:12px">${escapeHtml(store.address)}</span>
+    </div>
+  `;
+  infoWindow.setContent(html);
+  infoWindow.open(map, marker);
 }
 
 function escapeHtml(v){
