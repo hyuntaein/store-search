@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAVEBIC 점포 근접검색</title>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=oglmjsekyv&callback=initMap"></script>
+
+<style>
+body{margin:0;padding:20px;background:#f4f7fb;font-family:Arial,'Malgun Gothic',sans-serif;color:#10213f}
+.wrap{max-width:1100px;margin:0 auto;background:white;border:1px solid #cfe0f8;border-radius:24px;padding:24px}
+h1{margin:0 0 8px;color:#123f7a}
+.sub{color:#64748b;margin-bottom:18px}
+.card{border:1px solid #d7e6fb;background:#f8fbff;border-radius:18px;padding:18px;margin:16px 0}
+input,select{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;font-size:14px}
+button{border:0;border-radius:12px;padding:12px 16px;font-weight:900;cursor:pointer}
+.blue{background:#2563eb;color:white}
+.green{background:#16a34a;color:white}
+.gray{background:#e5e7eb}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.badge{display:inline-block;padding:9px 12px;border-radius:999px;background:#eef6ff;border:1px solid #b8d3fb;font-weight:900;color:#123f7a}
+#map{width:100%;height:480px;border-radius:14px;border:1px solid #cbd5e1;background:#e5e7eb}
+table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
+th,td{border-bottom:1px solid #e2e8f0;padding:10px;text-align:left}
+th{background:#eaf4ff;color:#0b3b77}
+.small{font-size:12px;color:#64748b}
+.store-link{color:#2563eb;font-weight:900;cursor:pointer;text-decoration:underline}
+</style>
+</head>
+
+<body>
+<div class="wrap">
+  <h1>RAVEBIC 점포 근접검색</h1>
+  <div class="sub">세븐일레븐 / 이마트24 점포 리스트 업로드 → Firestore 저장 → 점포 검색 → 지도 표시</div>
+  <div class="badge" id="status">Firebase 연결 준비중...</div>
+
+  <div class="card">
+    <h2>0. 지도</h2>
+    <div id="map"></div>
+    <div class="small" style="margin-top:8px">검색 결과에서 점포명을 클릭하면 지도 중심이 해당 점포로 이동합니다. 현재는 좌표가 있는 데이터만 지도에 표시됩니다.</div>
+  </div>
+
+  <div class="card">
+    <h2>1. 점포 엑셀 업로드</h2>
+    <div class="sub">세븐일레븐 또는 이마트24 엑셀 파일을 업로드하세요.</div>
+
+    <div class="row">
+      <select id="brand">
+        <option value="세븐일레븐">세븐일레븐</option>
+        <option value="이마트24">이마트24</option>
+      </select>
+      <input id="fileInput" type="file" accept=".xlsx,.xls,.csv">
+    </div>
+
+    <div class="btns">
+      <button class="blue" onclick="parseExcel()">엑셀 읽기</button>
+      <button class="green" onclick="uploadStores()">Firestore 저장</button>
+      <button class="gray" onclick="loadStores()">저장된 점포 불러오기</button>
+      <button class="blue" onclick="geocodeVisibleStores()">현재 목록 좌표 변환</button>
+      <button class="green" onclick="geocodeAllPendingStores()">전체 미변환 자동 변환</button>
+      <button class="gray" onclick="showGeocodeSummary()">전체 좌표 현황</button>
+      <button class="gray" onclick="downloadFailedStores()">실패 점포 엑셀 다운로드</button>
+      <button class="gray" onclick="stopGeocodeAll()">전체 변환 중지</button>
+    </div>
+
+    <div class="small" id="uploadInfo">아직 읽은 파일이 없습니다.</div>
+  </div>
+
+  <div class="card">
+    <h2>2. 점포명 검색</h2>
+    <div class="row">
+      <input id="searchInput" placeholder="예: 강남, 역삼, 여의도">
+      <button class="blue" onclick="searchStores()">검색</button>
+    </div>
+    <div class="small">현재 단계에서는 점포명/주소 검색 + 지도 표시까지 됩니다. 다음 단계에서 주소 좌표 변환 후 가까운 점포 15개 기능을 붙입니다.</div>
+  </div>
+
+  <div class="card">
+    <h2>점포 목록</h2>
+    <div id="countInfo" class="small">0개</div>
+    <div style="overflow:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>No</th>
+            <th>브랜드</th>
+            <th>점포명</th>
+            <th>주소</th>
+            <th>위도</th>
+            <th>경도</th>
+            <th>상태</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="7">데이터가 없습니다.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const firebaseConfig = {
+  apiKey:"AIzaSyBmvE4sKxvO0OWTz2Nt70o-RuCKBTPds_0",
+  authDomain:"ravebic-app.firebaseapp.com",
+  projectId:"ravebic-app",
+  storageBucket:"ravebic-app.firebasestorage.app",
+  messagingSenderId:"44012584810",
+  appId:"1:44012584810:web:540cd8aba9ca8bbf2baf13",
+  measurementId:"G-EEN6GM72JT"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const GEOCODE_URL = "https://asia-northeast3-ravebic-app.cloudfunctions.net/geocodeAddress";
+
+let parsedStores = [];
+let allStores = [];
+let map = null;
+let markers = [];
+let infoWindow = null;
+let stopGeocodeRequested = false;
+
+document.getElementById("status").textContent = "Firebase 연결 완료";
+
+function initMap(){
+  if(typeof naver === "undefined" || !naver.maps){
+    document.getElementById("status").textContent = "네이버 지도 로딩 실패";
+    return;
+  }
+
+  map = new naver.maps.Map("map", {
+    center: new naver.maps.LatLng(37.5665, 126.9780),
+    zoom: 11
+  });
+
+  infoWindow = new naver.maps.InfoWindow({
+    content: ""
+  });
+}
+
+window.onload = function(){
+  initMap();
+};
+
+function clean(v){
+  return String(v == null ? "" : v).trim();
+}
+
+function normalizeKey(v){
+  return clean(v).replace(/\s+/g,"").replace(/[·ㆍ.\-_/]/g,"");
+}
+
+function findColumn(headers, candidates){
+  for(const c of candidates){
+    const idx = headers.findIndex(h => normalizeKey(h).includes(normalizeKey(c)));
+    if(idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function toNumberOrNull(v){
+  if(v === null || v === undefined || v === "") return null;
+  const n = Number(String(v).replace(/,/g,"").trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+async function parseExcel(){
+  const file = document.getElementById("fileInput").files[0];
+  const brand = document.getElementById("brand").value;
+
+  if(!file){
+    alert("엑셀 파일을 선택하세요.");
+    return;
+  }
+
+  const buffer = await file.arrayBuffer();
+  const wb = XLSX.read(buffer, {type:"array"});
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+
+  if(rows.length < 2){
+    alert("엑셀 데이터가 부족합니다.");
+    return;
+  }
+
+  let headerRowIndex = 0;
+  for(let i=0;i<Math.min(rows.length,10);i++){
+    const rowText = rows[i].join(" ");
+    if(rowText.includes("점포") || rowText.includes("주소") || rowText.includes("상호")){
+      headerRowIndex = i;
+      break;
+    }
+  }
+
+  const headers = rows[headerRowIndex].map(clean);
+
+  const nameCol = findColumn(headers, ["점포명","점포","상호","매장명","점명"]);
+  const addressCol = findColumn(headers, ["주소","소재지","점포주소","매장주소"]);
+  const codeCol = findColumn(headers, ["점포코드","코드","점코드"]);
+  const latCol = findColumn(headers, ["위도","lat","latitude"]);
+  const lngCol = findColumn(headers, ["경도","lng","lon","longitude"]);
+
+  if(nameCol < 0 || addressCol < 0){
+    alert("점포명 또는 주소 컬럼을 찾지 못했습니다. 엑셀 헤더명을 확인해야 합니다.");
+    console.log(headers);
+    return;
+  }
+
+  parsedStores = rows.slice(headerRowIndex + 1)
+    .map((r) => ({
+      brand,
+      storeName: clean(r[nameCol]),
+      address: clean(r[addressCol]),
+      storeCode: codeCol >= 0 ? clean(r[codeCol]) : "",
+      lat: latCol >= 0 ? toNumberOrNull(r[latCol]) : null,
+      lng: lngCol >= 0 ? toNumberOrNull(r[lngCol]) : null,
+      sourceFile: file.name,
+      createdAtText: new Date().toISOString()
+    }))
+    .filter(r => r.storeName && r.address);
+
+  document.getElementById("uploadInfo").textContent =
+    file.name + " / " + parsedStores.length.toLocaleString() + "개 점포 읽음";
+
+  renderStores(parsedStores.slice(0,100));
+  drawMarkers(parsedStores.slice(0,100));
+}
+
+async function uploadStores(){
+  if(!parsedStores.length){
+    alert("먼저 엑셀 읽기를 하세요.");
+    return;
+  }
+
+  if(!confirm(parsedStores.length.toLocaleString() + "개 점포를 Firestore stores 컬렉션에 저장할까요?")){
+    return;
+  }
+
+  document.getElementById("status").textContent = "Firestore 저장 중...";
+
+  const batchSize = 400;
+  let saved = 0;
+
+  for(let i=0;i<parsedStores.length;i+=batchSize){
+    const batch = db.batch();
+    const chunk = parsedStores.slice(i, i + batchSize);
+
+    chunk.forEach(store => {
+      const idBase = normalizeKey(store.brand + "_" + store.storeName + "_" + store.address).slice(0,120);
+      const ref = db.collection("stores").doc(idBase);
+      batch.set(ref, {
+        ...store,
+        searchKey: normalizeKey(store.brand + store.storeName + store.address),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, {merge:true});
+    });
+
+    await batch.commit();
+    saved += chunk.length;
+    document.getElementById("status").textContent =
+      "Firestore 저장 중... " + saved.toLocaleString() + " / " + parsedStores.length.toLocaleString();
+  }
+
+  document.getElementById("status").textContent = "저장 완료 · " + saved.toLocaleString() + "개";
+  alert("저장 완료");
+}
+
+async function loadStores(){
+  document.getElementById("status").textContent = "점포 불러오는 중...";
+
+  allStores = [];
+  let lastDoc = null;
+  const pageSize = 1000;
+
+  while(true){
+    let query = db.collection("stores").orderBy(firebase.firestore.FieldPath.documentId()).limit(pageSize);
+    if(lastDoc){
+      query = query.startAfter(lastDoc);
+    }
+
+    const snap = await query.get();
+    if(snap.empty) break;
+
+    snap.forEach(doc => allStores.push({id:doc.id, ...doc.data()}));
+    lastDoc = snap.docs[snap.docs.length - 1];
+
+    document.getElementById("status").textContent =
+      "점포 불러오는 중... " + allStores.length.toLocaleString() + "개";
+
+    if(snap.size < pageSize) break;
+  }
+
+  document.getElementById("status").textContent =
+    "저장된 점포 " + allStores.length.toLocaleString() + "개 불러옴";
+
+  renderStores(allStores.slice(0,500));
+  drawMarkers(allStores.slice(0,500));
+}
+
+function searchStores(){
+  const q = normalizeKey(document.getElementById("searchInput").value);
+
+  if(!q){
+    alert("검색어를 입력하세요.");
+    return;
+  }
+
+  const base = allStores.length ? allStores : parsedStores;
+
+  const results = base.filter(s =>
+    normalizeKey((s.brand||"") + (s.storeName||"") + (s.address||"")).includes(q)
+  ).slice(0,100);
+
+  renderStores(results);
+  drawMarkers(results);
+}
+
+
+async function ensureAllStoresLoaded(){
+  if(allStores && allStores.length){
+    return allStores;
+  }
+
+  document.getElementById("status").textContent = "전체 점포 불러오는 중...";
+
+  allStores = [];
+  let lastDoc = null;
+  const pageSize = 1000;
+
+  while(true){
+    let query = db.collection("stores").orderBy(firebase.firestore.FieldPath.documentId()).limit(pageSize);
+    if(lastDoc){
+      query = query.startAfter(lastDoc);
+    }
+
+    const snap = await query.get();
+    if(snap.empty) break;
+
+    snap.forEach(doc => allStores.push({id:doc.id, ...doc.data()}));
+    lastDoc = snap.docs[snap.docs.length - 1];
+
+    document.getElementById("status").textContent =
+      "전체 점포 불러오는 중... " + allStores.length.toLocaleString() + "개";
+
+    if(snap.size < pageSize) break;
+  }
+
+  return allStores;
+}
+
+function getGeocodeSummary(rows){
+  const total = rows.length;
+  const done = rows.filter(hasValidLatLng).length;
+  const failed = rows.filter(s => !hasValidLatLng(s) && s.geocodeFailed).length;
+  const pending = rows.filter(s => s.id && s.address && !hasValidLatLng(s) && !s.geocodeFailed).length;
+  const noAddress = rows.filter(s => !hasValidLatLng(s) && (!s.address || !String(s.address).trim())).length;
+
+  return {total, done, failed, pending, noAddress};
+}
+
+async function showGeocodeSummary(){
+  const rows = await ensureAllStoresLoaded();
+  const s = getGeocodeSummary(rows);
+
+  document.getElementById("status").textContent =
+    "전체 " + s.total.toLocaleString() +
+    " / 좌표 완료 " + s.done.toLocaleString() +
+    " / 남은 대상 " + s.pending.toLocaleString() +
+    " / 실패 " + s.failed.toLocaleString();
+
+  alert(
+    "전체 좌표 현황\n" +
+    "전체 점포: " + s.total.toLocaleString() + "개\n" +
+    "좌표 완료: " + s.done.toLocaleString() + "개\n" +
+    "남은 변환 대상: " + s.pending.toLocaleString() + "개\n" +
+    "실패 점포: " + s.failed.toLocaleString() + "개\n" +
+    "주소 없음: " + s.noAddress.toLocaleString() + "개"
+  );
+
+  const displayRows = rows
+    .filter(s => !hasValidLatLng(s))
+    .slice(0,500);
+
+  renderStores(displayRows);
+  drawMarkers(displayRows);
+}
+
+function stopGeocodeAll(){
+  stopGeocodeRequested = true;
+  document.getElementById("status").textContent = "전체 좌표 변환 중지 요청됨...";
+}
+
+async function geocodeOneStore(store){
+  const response = await fetch(GEOCODE_URL, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({address: store.address})
+  });
+
+  if(!response.ok){
+    throw new Error("Geocoding HTTP " + response.status);
+  }
+
+  const data = await response.json();
+
+  if(data.ok && Number.isFinite(Number(data.lat)) && Number.isFinite(Number(data.lng))){
+    await db.collection("stores").doc(store.id).set({
+      lat: Number(data.lat),
+      lng: Number(data.lng),
+      geocodeFailed: false,
+      geocodeFailedReason: firebase.firestore.FieldValue.delete(),
+      geocodeFailedAt: firebase.firestore.FieldValue.delete(),
+      geocodedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, {merge:true});
+
+    store.lat = Number(data.lat);
+    store.lng = Number(data.lng);
+    store.geocodeFailed = false;
+    delete store.geocodeFailedReason;
+    return {ok:true};
+  }
+
+  const reason = data && (data.reason || data.message) ? (data.reason || data.message) : "NO_RESULT";
+  await markGeocodeFailed(store, reason);
+  return {ok:false, reason};
+}
+
+async function geocodeAllPendingStores(){
+  const rows = await ensureAllStoresLoaded();
+
+  let summary = getGeocodeSummary(rows);
+  if(!summary.pending){
+    alert(
+      "전체 미변환 대상이 없습니다.\n" +
+      "좌표 완료: " + summary.done.toLocaleString() + "개\n" +
+      "실패 점포: " + summary.failed.toLocaleString() + "개"
+    );
+    renderStores(rows.filter(s => !hasValidLatLng(s)).slice(0,500));
+    drawMarkers(rows.filter(hasValidLatLng).slice(0,500));
+    return;
+  }
+
+  if(!confirm(
+    "전체 미변환 점포 " + summary.pending.toLocaleString() + "개를 자동으로 좌표 변환할까요?\n\n" +
+    "이미 실패 처리된 점포 " + summary.failed.toLocaleString() + "개는 건너뜁니다.\n" +
+    "실패하는 점포는 자동으로 실패 표시하고 다시 반복하지 않습니다.\n" +
+    "작업 중 멈추려면 '전체 변환 중지' 버튼을 누르세요."
+  )){
+    return;
+  }
+
+  stopGeocodeRequested = false;
+
+  let success = 0;
+  let fail = 0;
+  let processed = 0;
+
+  while(!stopGeocodeRequested){
+    const targets = rows
+      .filter(s => s.id && s.address && !hasValidLatLng(s) && !s.geocodeFailed)
+      .slice(0,50);
+
+    if(!targets.length){
+      break;
+    }
+
+    renderStores(targets);
+    drawMarkers(targets);
+
+    for(let i=0;i<targets.length;i++){
+      if(stopGeocodeRequested) break;
+
+      const store = targets[i];
+      processed++;
+
+      document.getElementById("status").textContent =
+        "전체 좌표 변환 중... " +
+        "처리 " + processed.toLocaleString() + "개 / " +
+        "성공 " + success.toLocaleString() + "개 / " +
+        "실패 " + fail.toLocaleString() + "개 · " +
+        store.storeName;
+
+      try{
+        const result = await geocodeOneStore(store);
+        if(result.ok){
+          success++;
+        }else{
+          fail++;
+        }
+      }catch(err){
+        console.error("Geocoding 실패", store, err);
+        await markGeocodeFailed(store, err && err.message ? err.message : "ERROR");
+        fail++;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 120));
+    }
+
+    summary = getGeocodeSummary(rows);
+    document.getElementById("status").textContent =
+      "전체 좌표 변환 중... 완료 " + summary.done.toLocaleString() +
+      " / 남은 대상 " + summary.pending.toLocaleString() +
+      " / 실패 " + summary.failed.toLocaleString();
+
+    // 브라우저가 멈춘 것처럼 보이지 않게 잠시 쉬어갑니다.
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+
+  summary = getGeocodeSummary(rows);
+
+  const remainingRows = rows
+    .filter(s => !hasValidLatLng(s))
+    .slice(0,500);
+
+  renderStores(remainingRows);
+  drawMarkers(rows.filter(hasValidLatLng).slice(0,500));
+
+  document.getElementById("status").textContent =
+    (stopGeocodeRequested ? "전체 좌표 변환 중지됨" : "전체 좌표 변환 완료") +
+    " · 성공 " + success.toLocaleString() +
+    "개 / 실패 " + fail.toLocaleString() +
+    "개 / 남은 대상 " + summary.pending.toLocaleString() +
+    "개 / 실패 누적 " + summary.failed.toLocaleString() + "개";
+
+  alert(
+    (stopGeocodeRequested ? "전체 좌표 변환을 중지했습니다.\n" : "전체 좌표 변환이 완료되었습니다.\n") +
+    "이번 성공: " + success.toLocaleString() + "개\n" +
+    "이번 실패: " + fail.toLocaleString() + "개\n" +
+    "전체 좌표 완료: " + summary.done.toLocaleString() + "개\n" +
+    "남은 변환 대상: " + summary.pending.toLocaleString() + "개\n" +
+    "실패 점포 누적: " + summary.failed.toLocaleString() + "개"
+  );
+}
+
+async function downloadFailedStores(){
+  const rows = await ensureAllStoresLoaded();
+  const failedRows = rows
+    .filter(s => !hasValidLatLng(s))
+    .map((s, i) => ({
+      No: i + 1,
+      brand: s.brand || "",
+      storeName: s.storeName || "",
+      address: s.address || "",
+      storeCode: s.storeCode || "",
+      geocodeFailed: s.geocodeFailed ? "Y" : "",
+      geocodeFailedReason: s.geocodeFailedReason || "",
+      id: s.id || ""
+    }));
+
+  if(!failedRows.length){
+    alert("좌표가 없는 점포가 없습니다.");
+    return;
+  }
+
+  const ws = XLSX.utils.json_to_sheet(failedRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "좌표 미변환 점포");
+
+  const date = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, "ravebic_좌표_미변환_" + failedRows.length + "개_" + date + ".xlsx");
+}
+
+
+
+async function geocodeVisibleStores(){
+  const rows = window.currentRenderedStores || [];
+
+  const remainingBefore = rows.filter(s => s.id && s.address && !hasValidLatLng(s) && !s.geocodeFailed).length;
+  const alreadyFailed = rows.filter(s => s.geocodeFailed && !hasValidLatLng(s)).length;
+  const targets = rows
+    .filter(s => s.id && s.address && !hasValidLatLng(s) && !s.geocodeFailed)
+    .slice(0,50);
+
+  if(!targets.length){
+    alert("현재 목록에서 새로 변환할 점포가 없습니다.\n이미 좌표가 있거나, 이전에 실패 처리된 점포입니다.\n현재 목록 실패 제외 미변환: " + remainingBefore + "개\n실패 기록: " + alreadyFailed + "개");
+    return;
+  }
+
+  if(!confirm("현재 화면 목록 중 좌표가 없고 실패 기록이 없는 점포 " + targets.length + "개를 변환할까요?\n한 번에 최대 50개씩 처리합니다.\n현재 목록 남은 변환 대상: " + remainingBefore + "개\n현재 목록 실패 기록: " + alreadyFailed + "개")){
+    return;
+  }
+
+  let success = 0;
+  let fail = 0;
+
+  for(let i=0;i<targets.length;i++){
+    const store = targets[i];
+    document.getElementById("status").textContent =
+      "좌표 변환 중... " + (i+1) + " / " + targets.length + " · " + store.storeName;
+
+    try{
+      const response = await fetch(GEOCODE_URL, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({address: store.address})
+      });
+
+      if(!response.ok){
+        throw new Error("Geocoding HTTP " + response.status);
+      }
+
+      const data = await response.json();
+
+      if(data.ok && Number.isFinite(Number(data.lat)) && Number.isFinite(Number(data.lng))){
+        await db.collection("stores").doc(store.id).set({
+          lat: Number(data.lat),
+          lng: Number(data.lng),
+          geocodeFailed: false,
+          geocodeFailedReason: firebase.firestore.FieldValue.delete(),
+          geocodedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, {merge:true});
+
+        store.lat = Number(data.lat);
+        store.lng = Number(data.lng);
+        store.geocodeFailed = false;
+        success++;
+      }else{
+        await markGeocodeFailed(store, data && (data.reason || data.message) ? (data.reason || data.message) : "NO_RESULT");
+        fail++;
+      }
+    }catch(err){
+      console.error("Geocoding 실패", store, err);
+      await markGeocodeFailed(store, err && err.message ? err.message : "ERROR");
+      fail++;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 120));
+  }
+
+  const remainingAfter = rows.filter(s => s.id && s.address && !hasValidLatLng(s) && !s.geocodeFailed).length;
+  const failedAfter = rows.filter(s => s.geocodeFailed && !hasValidLatLng(s)).length;
+
+  document.getElementById("status").textContent =
+    "좌표 변환 완료 · 성공 " + success + "개 / 실패 " + fail + "개 / 남은 대상 " + remainingAfter + "개";
+
+  renderStores(rows);
+  drawMarkers(rows);
+  alert("좌표 변환 완료\n성공: " + success + "개\n실패: " + fail + "개\n남은 변환 대상: " + remainingAfter + "개\n실패 기록: " + failedAfter + "개");
+}
+
+async function markGeocodeFailed(store, reason){
+  if(!store || !store.id) return;
+
+  const safeReason = String(reason || "UNKNOWN").slice(0,200);
+
+  await db.collection("stores").doc(store.id).set({
+    geocodeFailed: true,
+    geocodeFailedReason: safeReason,
+    geocodeFailedAt: firebase.firestore.FieldValue.serverTimestamp()
+  }, {merge:true});
+
+  store.geocodeFailed = true;
+  store.geocodeFailedReason = safeReason;
+}
+
+function renderStores(rows){
+  const tbody = document.getElementById("tbody");
+  document.getElementById("countInfo").textContent = rows.length.toLocaleString() + "개 표시";
+
+  if(!rows.length){
+    tbody.innerHTML = '<tr><td colspan="7">데이터가 없습니다.</td></tr>';
+    clearMarkers();
+    return;
+  }
+
+  tbody.innerHTML = rows.map((r,i)=>`
+    <tr>
+      <td>${i+1}</td>
+      <td>${escapeHtml(r.brand)}</td>
+      <td><span class="store-link" onclick="focusStore(${i})">${escapeHtml(r.storeName)}</span></td>
+      <td>${escapeHtml(r.address)}</td>
+      <td>${r.lat ?? ""}</td>
+      <td>${r.lng ?? ""}</td>
+      <td>${renderGeocodeStatus(r)}</td>
+    </tr>
+  `).join("");
+
+  window.currentRenderedStores = rows;
+}
+
+function clearMarkers(){
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+}
+
+function hasValidLatLng(store){
+  if(!store) return false;
+
+  const latRaw = store.lat;
+  const lngRaw = store.lng;
+
+  // null, undefined, 빈 문자열은 좌표가 없는 상태입니다.
+  // 기존 Number(null) === 0 문제 때문에 좌표가 있는 것으로 잘못 판단되던 버그를 수정했습니다.
+  if(latRaw === null || latRaw === undefined || String(latRaw).trim() === "") return false;
+  if(lngRaw === null || lngRaw === undefined || String(lngRaw).trim() === "") return false;
+
+  const lat = Number(latRaw);
+  const lng = Number(lngRaw);
+
+  return Number.isFinite(lat) && Number.isFinite(lng) &&
+         lat >= -90 && lat <= 90 &&
+         lng >= -180 && lng <= 180;
+}
+
+function drawMarkers(rows){
+  if(!map) return;
+
+  clearMarkers();
+
+  const validRows = rows.filter(hasValidLatLng);
+
+  if(!validRows.length){
+    return;
+  }
+
+  const bounds = new naver.maps.LatLngBounds();
+
+  validRows.forEach((store) => {
+    const pos = new naver.maps.LatLng(Number(store.lat), Number(store.lng));
+    const marker = new naver.maps.Marker({
+      position: pos,
+      map: map,
+      title: store.storeName
+    });
+
+    naver.maps.Event.addListener(marker, "click", function(){
+      openInfo(marker, store);
+    });
+
+    markers.push(marker);
+    bounds.extend(pos);
+  });
+
+  map.fitBounds(bounds);
+}
+
+function focusStore(index){
+  const rows = window.currentRenderedStores || [];
+  const store = rows[index];
+
+  if(!store){
+    return;
+  }
+
+  if(!hasValidLatLng(store)){
+    alert("아직 이 점포에는 위도/경도가 없습니다. 다음 단계에서 주소를 좌표로 변환해야 지도 이동이 가능합니다.");
+    return;
+  }
+
+  const pos = new naver.maps.LatLng(Number(store.lat), Number(store.lng));
+  map.setCenter(pos);
+  map.setZoom(16);
+
+  const marker = markers.find(m => m.getTitle && m.getTitle() === store.storeName);
+  if(marker){
+    openInfo(marker, store);
+  }
+}
+
+function openInfo(marker, store){
+  const html = `
+    <div style="padding:10px;min-width:210px">
+      <b>${escapeHtml(store.brand)} ${escapeHtml(store.storeName)}</b><br>
+      <span style="font-size:12px">${escapeHtml(store.address)}</span>
+    </div>
+  `;
+  infoWindow.setContent(html);
+  infoWindow.open(map, marker);
+}
+
+function renderGeocodeStatus(store){
+  if(hasValidLatLng(store)) return "완료";
+  if(store && store.geocodeFailed) return "실패";
+  return "미변환";
+}
+
+function escapeHtml(v){
+  return String(v||"").replace(/[&<>'"]/g, s => ({
+    "&":"&amp;",
+    "<":"&lt;",
+    ">":"&gt;",
+    "'":"&#39;",
+    '"':"&quot;"
+  }[s]));
+}
+</script>
+</body>
+</html>
