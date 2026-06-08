@@ -8,7 +8,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-functions-compat.js"></script>
 <script src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=oglmjsekyv&callback=initMap"></script>
 
 <style>
@@ -113,8 +112,7 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const functions = firebase.app().functions("asia-northeast3");
-const geocodeAddressFn = functions.httpsCallable("geocodeAddress");
+const GEOCODE_URL = "https://asia-northeast3-ravebic-app.cloudfunctions.net/geocodeAddress";
 
 let parsedStores = [];
 let allStores = [];
@@ -340,8 +338,17 @@ async function geocodeVisibleStores(){
       "좌표 변환 중... " + (i+1) + " / " + targets.length + " · " + store.storeName;
 
     try{
-      const result = await geocodeAddressFn({address: store.address});
-      const data = result.data || {};
+      const response = await fetch(GEOCODE_URL, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({address: store.address})
+      });
+
+      if(!response.ok){
+        throw new Error("Geocoding HTTP " + response.status);
+      }
+
+      const data = await response.json();
 
       if(data.ok && Number.isFinite(Number(data.lat)) && Number.isFinite(Number(data.lng))){
         await db.collection("stores").doc(store.id).set({
