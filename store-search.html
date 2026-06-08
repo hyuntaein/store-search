@@ -402,7 +402,22 @@ function clearMarkers(){
 }
 
 function hasValidLatLng(store){
-  return Number.isFinite(Number(store.lat)) && Number.isFinite(Number(store.lng));
+  if(!store) return false;
+
+  const latRaw = store.lat;
+  const lngRaw = store.lng;
+
+  // null, undefined, 빈 문자열은 좌표가 없는 상태입니다.
+  // 기존 Number(null) === 0 문제 때문에 좌표가 있는 것으로 잘못 판단되던 버그를 수정했습니다.
+  if(latRaw === null || latRaw === undefined || String(latRaw).trim() === "") return false;
+  if(lngRaw === null || lngRaw === undefined || String(lngRaw).trim() === "") return false;
+
+  const lat = Number(latRaw);
+  const lng = Number(lngRaw);
+
+  return Number.isFinite(lat) && Number.isFinite(lng) &&
+         lat >= -90 && lat <= 90 &&
+         lng >= -180 && lng <= 180;
 }
 
 function drawMarkers(rows){
