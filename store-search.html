@@ -262,7 +262,7 @@ if(store.storeCode){
   ).slice(0,120);
 }
 
-const ref = db.collection("stores").doc(idBase);
+const ref = db.collection("stores_v2").doc(idBase);
       batch.set(ref, {
         ...store,
         searchKey: normalizeKey(store.brand + store.storeName + store.address),
@@ -288,7 +288,7 @@ async function loadStores(){
   const pageSize = 1000;
 
   while(true){
-    let query = db.collection("stores").orderBy(firebase.firestore.FieldPath.documentId()).limit(pageSize);
+    let query = db.collection("stores_v2").orderBy(firebase.firestore.FieldPath.documentId()).limit(pageSize);
     if(lastDoc){
       query = query.startAfter(lastDoc);
     }
@@ -343,7 +343,7 @@ async function ensureAllStoresLoaded(){
   const pageSize = 1000;
 
   while(true){
-    let query = db.collection("stores").orderBy(firebase.firestore.FieldPath.documentId()).limit(pageSize);
+    let query = db.collection("stores_v2").orderBy(firebase.firestore.FieldPath.documentId()).limit(pageSize);
     if(lastDoc){
       query = query.startAfter(lastDoc);
     }
@@ -419,7 +419,7 @@ async function geocodeOneStore(store){
   const data = await response.json();
 
   if(data.ok && Number.isFinite(Number(data.lat)) && Number.isFinite(Number(data.lng))){
-    await db.collection("stores").doc(store.id).set({
+    await db.collection("stores_v2").doc(store.id).set({
       lat: Number(data.lat),
       lng: Number(data.lng),
       geocodeFailed: false,
@@ -617,7 +617,7 @@ async function geocodeVisibleStores(){
       const data = await response.json();
 
       if(data.ok && Number.isFinite(Number(data.lat)) && Number.isFinite(Number(data.lng))){
-        await db.collection("stores").doc(store.id).set({
+        await db.collection("stores_v2").doc(store.id).set({
           lat: Number(data.lat),
           lng: Number(data.lng),
           geocodeFailed: false,
@@ -658,7 +658,7 @@ async function markGeocodeFailed(store, reason){
 
   const safeReason = String(reason || "UNKNOWN").slice(0,200);
 
-  await db.collection("stores").doc(store.id).set({
+  await db.collection("stores_v2").doc(store.id).set({
     geocodeFailed: true,
     geocodeFailedReason: safeReason,
     geocodeFailedAt: firebase.firestore.FieldValue.serverTimestamp()
