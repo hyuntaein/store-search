@@ -263,11 +263,14 @@ if(store.storeCode){
 }
 
 const ref = db.collection("stores_v2").doc(idBase);
-      batch.set(ref, {
-        ...store,
-        searchKey: normalizeKey(store.brand + store.storeName + store.address),
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, {merge:true});
+     batch.set(ref, {
+  ...store,
+  searchKey: normalizeKey(store.brand + store.storeName + store.address),
+  geocodeFailed: false,
+  geocodeFailedReason: firebase.firestore.FieldValue.delete(),
+  geocodeFailedAt: firebase.firestore.FieldValue.delete(),
+  updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+}, {merge:true});
     });
 
     await batch.commit();
