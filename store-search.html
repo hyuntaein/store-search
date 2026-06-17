@@ -255,7 +255,7 @@ async function uploadStores(){
      let idBase;
 
 if(store.storeCode){
-  idBase = normalizeKey(store.storeCode);
+  idBase = String(store.storeCode).trim();
 }else{
   idBase = normalizeKey(
     store.brand + "_" + store.storeName
