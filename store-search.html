@@ -200,9 +200,9 @@ async function parseExcel(){
 
   const headers = rows[headerRowIndex].map(clean);
 
-  const nameCol = findColumn(headers, ["점포명","점포","상호","매장명","점명"]);
-  const addressCol = findColumn(headers, ["주소","소재지","점포주소","매장주소"]);
-  const codeCol = findColumn(headers, ["점포코드","코드","점코드"]);
+  const nameCol = findColumn(headers, ["점포명","점포","상호","매장명","점명","storeName","name"]);
+  const addressCol = findColumn(headers, ["주소","소재지","점포주소","매장주소","address"]);
+  const codeCol = findColumn(headers, ["점포코드","코드","점코드","storeCode","storeCo"]);
   const latCol = findColumn(headers, ["위도","lat","latitude"]);
   const lngCol = findColumn(headers, ["경도","lng","lon","longitude"]);
 
