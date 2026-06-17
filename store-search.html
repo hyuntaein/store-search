@@ -252,8 +252,17 @@ async function uploadStores(){
     const chunk = parsedStores.slice(i, i + batchSize);
 
     chunk.forEach(store => {
-      const idBase = normalizeKey(store.brand + "_" + store.storeName + "_" + store.address).slice(0,120);
-      const ref = db.collection("stores").doc(idBase);
+     let idBase;
+
+if(store.storeCode){
+  idBase = normalizeKey(store.storeCode);
+}else{
+  idBase = normalizeKey(
+    store.brand + "_" + store.storeName
+  ).slice(0,120);
+}
+
+const ref = db.collection("stores").doc(idBase);
       batch.set(ref, {
         ...store,
         searchKey: normalizeKey(store.brand + store.storeName + store.address),
